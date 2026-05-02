@@ -1,6 +1,18 @@
 import pandas as pd
+import argparse
 
-file_path = "shift_by_day.xlsx"
+parser = argparse.ArgumentParser()
+
+parser.add_argument("--year", type=int, default=2026)
+parser.add_argument("--month", type=int, default=5)
+args = parser.parse_args()
+
+year = args.year
+month = args.month
+
+month_str = f"{year}_{month:02d}"
+file_path = f"shift/{month_str}_shift.xlsx"
+
 
 xls = pd.ExcelFile(file_path)
 sheet_names = xls.sheet_names
@@ -41,18 +53,7 @@ for sheet in sheet_names:
             })
 
 
-# =========================
-# ③ 出力①：危険（1人以下）
-# =========================
-danger_df = pd.DataFrame(danger_slots)
-
-print("🔴【危険】1人以下のスロット")
-if danger_df.empty:
-    print("なし（問題ありません）")
-else:
-    danger_df = danger_df.sort_values(["date", "slot"])
-    print(danger_df)
-
+# ========================
 
 # =========================
 # ④ 出力②：注意（2人）
@@ -66,9 +67,23 @@ else:
     warning_df = warning_df.sort_values(["date", "slot"])
     print(warning_df)
 
+# ③ 出力①：危険（1人以下）
+# =========================
+danger_df = pd.DataFrame(danger_slots)
 
-file_path = "shift_by_day.xlsx"
-output_path = "danger_days_shift.xlsx"
+print("🔴【危険】1人以下のスロット")
+if danger_df.empty:
+    print("なし（問題ありません）")
+else:
+    danger_df = danger_df.sort_values(["date", "slot"])
+    print(danger_df)
+
+
+
+# file_path = "shift_by_day.xlsx"
+# output_path = "danger_days_shift.xlsx"
+file_path = f"shift/{month_str}_shift.xlsx"
+output_path = f"shift/{month_str}_shift_danger.xlsx"
 
 xls = pd.ExcelFile(file_path)
 sheet_names = xls.sheet_names
