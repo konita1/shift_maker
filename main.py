@@ -640,38 +640,115 @@ schedule_df = schedule_df.dropna(subset=["date", "slot", "name"])
 # print("追加従業員の出勤日:", selected_work_dates)
 # print("追加従業員スロット数:", len(extra_schedule_df))
 # print(extra_schedule_df.head())
+
+
 # =========================
 # ⑭ Excel出力（休憩赤表示付き）
 # =========================
+import os
+
+os.makedirs("shift", exist_ok=True)
+
 month_str = f"{year}_{month:02d}"
 output_excel_path = f"shift/{month_str}_shift.xlsx"
-# output_excel_path = "shift_by_day.xlsx"
+
+weekday_ja = {
+    "Mon": "月",
+    "Tue": "火",
+    "Wed": "水",
+    "Thu": "木",
+    "Fri": "金",
+    "Sat": "土",
+    "Sun": "日",
+}
+
+# contracts.csv の名前順を維持
+# contract_employee_names = contracts["name"].drop_duplicates().tolist()
+# all_employee_names = contract_employee_names.copy()
+
+# if extra_name not in all_employee_names:
+#     all_employee_names.append(extra_name)
+
+contract_employee_names = contracts["name"].drop_duplicates().tolist()
+
+# 社員Sを先頭に
+all_employee_names = [extra_name]
+
+for name in contract_employee_names:
+    if name != extra_name:
+        all_employee_names.append(name)
+
+all_slot_names = pd.DataFrame(
+    slots,
+    columns=["start", "end", "slot"]
+)["slot"].tolist()
 
 with pd.ExcelWriter(output_excel_path, engine="xlsxwriter") as writer:
 
     workbook = writer.book
 
-    red_format = workbook.add_format({
-        "bg_color": "#FFC7CE",
-        "font_color": "#FFC7CE"
+    # =========================
+    # フォーマット
+    # =========================
+    border = workbook.add_format({
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "font_size": 9
     })
 
-    all_slot_names = pd.DataFrame(
-        slots,
-        columns=["start", "end", "slot"]
-    )["slot"]
+    header_format = workbook.add_format({
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "bold": True,
+        "font_size": 9
+    })
 
+    name_format = workbook.add_format({
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "bold": True,
+        "font_size": 9
+    })
 
-    # all_employee_names = schedule_df["name"].unique()
-    # all_employee_names = contracts["name"].unique()
-    contract_employee_names = contracts["name"].drop_duplicates().tolist()
+    work_format = workbook.add_format({
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "font_size": 9
+    })
 
-    all_employee_names = contract_employee_names.copy()
+    break_format = workbook.add_format({
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "bg_color": "#9C0006",
+        "font_color": "#9C0006",
+        "font_size": 9
+    })
 
-    if extra_name not in all_employee_names:
-        all_employee_names.append(extra_name)
-        
-    for date_val in schedule_df["date"].unique():
+    summary_format = workbook.add_format({
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "bold": True,
+        "font_size": 9
+    })
+
+    number_format = workbook.add_format({
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "num_format": "0.0",
+        "font_size": 9
+    })
+
+    # =========================
+    # 日付ごとにシート作成
+    # =========================
+    for date_val in sorted(schedule_df["date"].unique()):
 
         daily = schedule_df[schedule_df["date"] == date_val]
 
@@ -689,22 +766,378 @@ with pd.ExcelWriter(output_excel_path, engine="xlsxwriter") as writer:
             fill_value=""
         )
 
-        sheet_name = str(date_val).replace("/", "-")
-        pivot.to_excel(writer, sheet_name=sheet_name)
-
-        worksheet = writer.sheets[sheet_name]
-
-        # 現在のシート（日付）に該当する休憩衝突のみをフィルタリング
+        # 休憩を pivot に反映
         current_date_break_conflicts = [
             item for item in break_conflicts if item["date"] == date_val
         ]
 
-        # 休憩セルを赤表示
-        for r, row in enumerate(pivot.index, start=1):
-            for c, col in enumerate(pivot.columns, start=1):
-                for item in current_date_break_conflicts:
-                    if item["name"] == row and item["slot"] == col:
-                        worksheet.write(r, c, "■", red_format)
+        for item in current_date_break_conflicts:
+            if item["name"] in pivot.index and item["slot"] in pivot.columns:
+                pivot.loc[item["name"], item["slot"]] = "■"
+
+        dt = datetime.strptime(date_val, "%Y/%m/%d")
+        day_num = dt.day
+        weekday_key = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][dt.weekday()]
+        weekday_text = weekday_ja[weekday_key]
+
+        sheet_name = str(date_val).replace("/", "-")
+        worksheet = workbook.add_worksheet(sheet_name)
+        writer.sheets[sheet_name] = worksheet
+
+        # =========================
+        # 列幅・行高
+        # =========================
+        worksheet.set_column(0, 0, 7)              # 名前列
+        worksheet.set_column(1, len(all_slot_names), 3)  # 時間スロット
+        worksheet.set_column(len(all_slot_names) + 1, len(all_slot_names) + 1, 6)
+
+        worksheet.set_row(0, 18)
+        worksheet.set_row(1, 18)
+        worksheet.set_row(2, 18)
+
+        # =========================
+        # 上部ヘッダー
+        # =========================
+        last_slot_col = len(all_slot_names)
+
+        worksheet.write(0, 0, day_num, header_format)
+        worksheet.merge_range(0, 1, 0, last_slot_col, weekday_text, header_format)
+
+        worksheet.write(1, 0, "氏名", header_format)
+
+        for c, slot_name in enumerate(all_slot_names, start=1):
+            start_time = slot_name.split("-")[0]
+            minute = start_time.split(":")[1]
+
+            # 00分の列だけ時間を表示
+            if minute == "00":
+                hour = int(start_time.split(":")[0])
+                worksheet.write(1, c, hour, header_format)
+            else:
+                worksheet.write(1, c, "", header_format)
+
+        worksheet.write(1, last_slot_col + 1, "計", header_format)
+
+        # for c in range(1, last_slot_col + 1):
+        #     worksheet.write(2, c, "", header_format)
+        # worksheet.write(2, last_slot_col + 1, "", header_format)
+
+        # =========================
+        # 従業員行
+        # =========================
+        start_row = 2
+
+        for r, name in enumerate(all_employee_names, start=start_row):
+            worksheet.write(r, 0, name, name_format)
+
+            work_count = 0
+
+            for c, slot_name in enumerate(all_slot_names, start=1):
+                val = pivot.loc[name, slot_name]
+
+                if val == "■":
+                    worksheet.write(r, c, "■", break_format)
+                elif val == "□":
+                    worksheet.write(r, c, "□", work_format)
+                    work_count += 1
+                else:
+                    worksheet.write(r, c, "", border)
+
+            # 右端：勤務時間
+            worksheet.write(r, last_slot_col + 1, work_count * 0.5, number_format)
+
+        # =========================
+        # 下部集計
+        # =========================
+        summary_start = start_row + len(all_employee_names) + 1
+
+        summary_rows = [
+            "社員S時間",
+            "PT時間",
+            "合計時間",
+            "追加入時間",
+            "総人数",
+        ]
+
+        for i, label in enumerate(summary_rows):
+            worksheet.write(summary_start + i, 0, label, summary_format)
+
+        for c, slot_name in enumerate(all_slot_names, start=1):
+
+            slot_values = pivot[slot_name]
+
+            extra_work = 1 if pivot.loc[extra_name, slot_name] == "□" else 0
+            pt_count = ((slot_values == "□") & (slot_values.index != extra_name)).sum()
+            total_count = (slot_values == "□").sum()
+
+            # 社員S時間：追加従業員が勤務していれば0.5
+            worksheet.write(summary_start + 0, c, extra_work * 0.5, number_format)
+
+            # PT時間：追加従業員以外の勤務人数
+            worksheet.write(summary_start + 1, c, pt_count, number_format)
+
+            # 合計時間：勤務人数
+            worksheet.write(summary_start + 2, c, total_count, number_format)
+
+            # 追加入時間：追加従業員が入ったか
+            worksheet.write(summary_start + 3, c, extra_work, number_format)
+
+            # 総人数：最終人数
+            worksheet.write(summary_start + 4, c, total_count, number_format)
+
+        # 右端合計
+        for i in range(len(summary_rows)):
+            row = summary_start + i
+            worksheet.write_formula(
+                row,
+                last_slot_col + 1,
+                f"=SUM(B{row+1}:{xlsxwriter.utility.xl_col_to_name(last_slot_col)}{row+1})",
+                number_format
+            )
+
+        # 印刷・表示調整
+        worksheet.freeze_panes(3, 1)
+        worksheet.set_landscape()
+        worksheet.fit_to_pages(1, 0)
+
+
+    # =========================
+    # 月間シフト表シート（画像形式）
+    # =========================
+    monthly_sheet_name = "月間シフト表"
+    monthly_ws = workbook.add_worksheet(monthly_sheet_name)
+    writer.sheets[monthly_sheet_name] = monthly_ws
+
+    month_days = calendar.monthrange(year, month)[1]
+
+    # フォーマット
+    monthly_header = workbook.add_format({
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "bold": True,
+        "font_size": 8
+    })
+
+    monthly_name = workbook.add_format({
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "bold": True,
+        "font_size": 8
+    })
+
+    monthly_cell = workbook.add_format({
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "font_size": 7
+    })
+
+    monthly_red = workbook.add_format({
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "bg_color": "#FF0000",
+        "font_color": "#FF0000",
+        "font_size": 7
+    })
+
+    monthly_total = workbook.add_format({
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "bold": True,
+        "font_size": 7,
+        "num_format": "0.0"
+    })
+
+    # 分 → 文字列
+    def min_to_time(m):
+        if m is None:
+            return ""
+        h = m // 60
+        mm = m % 60
+        return f"{h}:{mm:02d}"
+
+    # その日の勤務開始・終了・休憩を取得
+    def get_daily_info(name, date_str):
+        work = schedule_df[
+            (schedule_df["date"] == date_str) &
+            (schedule_df["name"] == name)
+        ]
+
+        breaks = [
+            item for item in break_conflicts
+            if item["date"] == date_str and item["name"] == name
+        ]
+
+        if work.empty:
+            return {
+                "start": "",
+                "end": "",
+                "break": "",
+                "hours": 0
+            }
+
+        start_mins = []
+        end_mins = []
+
+        for slot_name in work["slot"]:
+            s, e = slot_name.split("-")
+            start_mins.append(to_minutes(s))
+            end_mins.append(to_minutes(e))
+
+        start_time = min(start_mins)
+        end_time = max(end_mins)
+
+        break_text = ""
+        if breaks:
+            bs = []
+            be = []
+            for item in breaks:
+                s, e = item["slot"].split("-")
+                bs.append(to_minutes(s))
+                be.append(to_minutes(e))
+
+            break_text = f"{min_to_time(min(bs))}-{min_to_time(max(be))}"
+
+        return {
+            "start": min_to_time(start_time),
+            "end": min_to_time(end_time),
+            "break": break_text,
+            "hours": len(work) * 0.5
+        }
+
+    # 左右2ブロック：1〜15日、16日〜月末
+    blocks = [
+        {
+            "start_day": 1,
+            "end_day": min(15, month_days),
+            "start_col": 0
+        },
+        {
+            "start_day": 16,
+            "end_day": month_days,
+            "start_col": 18
+        }
+    ]
+
+    for block in blocks:
+        start_day = block["start_day"]
+        end_day = block["end_day"]
+        start_col = block["start_col"]
+
+        if start_day > month_days:
+            continue
+
+        day_count = end_day - start_day + 1
+        total_col = start_col + 2 + day_count
+
+        # 列幅
+        monthly_ws.set_column(start_col, start_col, 4)          # 番号
+        monthly_ws.set_column(start_col + 1, start_col + 1, 9)  # 氏名
+        monthly_ws.set_column(start_col + 2, total_col - 1, 5)  # 日付
+        monthly_ws.set_column(total_col, total_col, 7)          # 合計
+
+        # ヘッダー
+        monthly_ws.write(0, start_col, "日付", monthly_header)
+        monthly_ws.write(1, start_col, "曜日", monthly_header)
+        monthly_ws.merge_range(2, start_col, 3, start_col + 1, "社員名", monthly_header)
+
+        for i, day in enumerate(range(start_day, end_day + 1)):
+            col = start_col + 2 + i
+            dt = datetime(year, month, day)
+            weekday_text = ["月", "火", "水", "木", "金", "土", "日"][dt.weekday()]
+
+            monthly_ws.write(0, col, day, monthly_header)
+            monthly_ws.write(1, col, weekday_text, monthly_header)
+
+        monthly_ws.write(0, total_col, "計", monthly_header)
+        monthly_ws.write(1, total_col, "", monthly_header)
+
+        # 従業員ごと
+        row = 4
+
+        for idx, name in enumerate(all_employee_names, start=1):
+            monthly_ws.merge_range(row, start_col, row + 2, start_col, idx, monthly_name)
+            monthly_ws.merge_range(row, start_col + 1, row + 2, start_col + 1, name, monthly_name)
+
+            total_hours = 0
+
+            for i, day in enumerate(range(start_day, end_day + 1)):
+                col = start_col + 2 + i
+                date_str = datetime(year, month, day).strftime("%Y/%m/%d")
+
+                info = get_daily_info(name, date_str)
+
+                if info["hours"] == 0:
+                    monthly_ws.merge_range(row, col, row + 2, col, "", monthly_red)
+                else:
+                    monthly_ws.write(row, col, info["start"], monthly_cell)
+                    monthly_ws.write(row + 1, col, info["end"], monthly_cell)
+                    monthly_ws.write(row + 2, col, info["break"], monthly_cell)
+                    total_hours += info["hours"]
+
+            monthly_ws.merge_range(row, total_col, row + 2, total_col, total_hours, monthly_total)
+
+            row += 3
+
+        # 下部集計
+        summary_labels = [
+            "PT労働時間合計",
+            "社員S労働時間合計",
+            "日曜基準差時間",
+            "日曜基準差累計時間",
+        ]
+
+        row += 1
+
+        for label in summary_labels:
+            monthly_ws.merge_range(row, start_col, row, start_col + 1, label, monthly_header)
+
+            block_total = 0
+
+            for i, day in enumerate(range(start_day, end_day + 1)):
+                col = start_col + 2 + i
+                date_str = datetime(year, month, day).strftime("%Y/%m/%d")
+
+                day_total = 0
+                s_total = 0
+
+                for name in all_employee_names:
+                    info = get_daily_info(name, date_str)
+
+                    if name == extra_name:
+                        s_total += info["hours"]
+                    else:
+                        day_total += info["hours"]
+
+                if label == "PT労働時間合計":
+                    val = day_total
+                elif label == "社員S労働時間合計":
+                    val = s_total
+                elif label == "日曜基準差時間":
+                    val = day_total - 40
+                else:
+                    val = block_total + (day_total - 40)
+                    block_total = val
+
+                monthly_ws.write(row, col, val, monthly_total)
+
+            monthly_ws.write_formula(
+                row,
+                total_col,
+                f"=SUM({xlsxwriter.utility.xl_col_to_name(start_col + 2)}{row+1}:{xlsxwriter.utility.xl_col_to_name(total_col - 1)}{row+1})",
+                monthly_total
+            )
+
+            row += 1
+
+    monthly_ws.freeze_panes(4, 2)
+    monthly_ws.set_landscape()
+    monthly_ws.fit_to_pages(1, 1)
+    
+   
 
 print(f"Excel出力完了：{output_excel_path}")
-
