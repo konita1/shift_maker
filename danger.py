@@ -1,5 +1,6 @@
 import pandas as pd
 import argparse
+from datetime import datetime, timedelta
 
 parser = argparse.ArgumentParser()
 
@@ -17,6 +18,21 @@ file_path = f"shift/{month_str}_shift.xlsx"
 xls = pd.ExcelFile(file_path)
 sheet_names = xls.sheet_names
 
+def generate_slots(start="06:00", end="20:30"):
+    slots = []
+    current = datetime.strptime(start, "%H:%M")
+    end_dt = datetime.strptime(end, "%H:%M")
+
+    while current < end_dt:
+        nxt = current + timedelta(minutes=30)
+        slots.append(
+            current.strftime("%H:%M") + "-" + nxt.strftime("%H:%M")
+        )
+        current = nxt
+
+    return slots
+
+all_slot_names = generate_slots()
 
 # =========================
 # ① 結果格納
@@ -28,27 +44,71 @@ warning_slots = []  # ちょうど2人
 # =========================
 # ② チェック処理
 # =========================
+# for sheet in sheet_names:
+
+#     df = pd.read_excel(file_path, sheet_name=sheet, index_col=0)
+
+#     for col in df.columns:
+
+#         count = (df[col] == "□").sum()
+
+#         # 1人以下（危険）
+#         if count <= 1:
+#             danger_slots.append({
+#                 "date": sheet,
+#                 "slot": col,
+#                 "staff_count": count
+#             })
+
+#         # ちょうど2人（注意）
+#         elif count == 2:
+#             warning_slots.append({
+#                 "date": sheet,
+#                 "slot": col,
+#                 "staff_count": count
+#             })
 for sheet in sheet_names:
 
-    df = pd.read_excel(file_path, sheet_name=sheet, index_col=0)
+    # 月間シフト表は除外
+    if sheet == "月間シフト表":
+        continue
 
-    for col in df.columns:
+    df = pd.read_excel(file_path, sheet_name=sheet, header=None)
 
-        count = (df[col] == "□").sum()
+    # 0行目: 日付・曜日
+    # 1行目: 氏名・時間
+    # 2行目以降: 従業員
+    employee_df = df.iloc[2:, :]
 
-        # 1人以下（危険）
+    # 下部集計行を除外
+    employee_df = employee_df[
+        ~employee_df.iloc[:, 0].isin([
+            "社員S時間",
+            "PT時間",
+            "合計時間",
+            "追加入時間",
+            "総人数"
+        ])
+    ]
+
+    # スロット列だけ取得
+    slot_df = employee_df.iloc[:, 1:1 + len(all_slot_names)]
+
+    for i, slot_name in enumerate(all_slot_names):
+
+        count = (slot_df.iloc[:, i] == "□").sum()
+
         if count <= 1:
             danger_slots.append({
                 "date": sheet,
-                "slot": col,
+                "slot": slot_name,
                 "staff_count": count
             })
 
-        # ちょうど2人（注意）
         elif count == 2:
             warning_slots.append({
                 "date": sheet,
-                "slot": col,
+                "slot": slot_name,
                 "staff_count": count
             })
 
@@ -89,6 +149,21 @@ xls = pd.ExcelFile(file_path)
 sheet_names = xls.sheet_names
 
 
+# # =========================
+# # ① 危険日抽出
+# # =========================
+# danger_dates = []
+
+# for sheet in sheet_names:
+
+#     df = pd.read_excel(file_path, sheet_name=sheet, index_col=0)
+
+#     for col in df.columns:
+#         if (df[col] == "□").sum() <= 1:
+#             danger_dates.append(sheet)
+#             break
+
+# danger_dates = set(danger_dates)
 # =========================
 # ① 危険日抽出
 # =========================
@@ -96,15 +171,39 @@ danger_dates = []
 
 for sheet in sheet_names:
 
-    df = pd.read_excel(file_path, sheet_name=sheet, index_col=0)
+    # 月間シフト表・月シートは除外
+    if sheet in ["月間シフト表", "月"]:
+        continue
 
-    for col in df.columns:
-        if (df[col] == "□").sum() <= 1:
-            danger_dates.append(sheet)
+    df = pd.read_excel(file_path, sheet_name=sheet, header=None)
+
+    employee_df = df.iloc[2:, :]
+
+    employee_df = employee_df[
+        ~employee_df.iloc[:, 0].isin([
+            "社員S時間",
+            "PT時間",
+            "合計時間",
+            "追加入時間",
+            "総人数"
+        ])
+    ]
+
+    slot_df = employee_df.iloc[:, 1:1 + len(all_slot_names)]
+
+    has_danger = False
+
+    for i in range(len(all_slot_names)):
+        count = (slot_df.iloc[:, i] == "□").sum()
+
+        if count <= 1:
+            has_danger = True
             break
 
-danger_dates = set(danger_dates)
+    if has_danger:
+        danger_dates.append(sheet)
 
+danger_dates = set(danger_dates)
 
 # =========================
 # ② Excel出力（再描画＋色付け）
@@ -123,14 +222,22 @@ with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
         "font_color": "#9C0006"
     })
 
+    # for sheet in sheet_names:
+
+    #     # 危険日だけ出力
+    #     if sheet not in danger_dates:
+    #         continue
+
+    #     df = pd.read_excel(file_path, sheet_name=sheet, index_col=0)
+    #     df.to_excel(writer, sheet_name=sheet)
+
     for sheet in sheet_names:
 
-        # 危険日だけ出力
         if sheet not in danger_dates:
             continue
 
-        df = pd.read_excel(file_path, sheet_name=sheet, index_col=0)
-        df.to_excel(writer, sheet_name=sheet)
+        df = pd.read_excel(file_path, sheet_name=sheet, header=None)
+        df.to_excel(writer, sheet_name=sheet, index=False, header=False)
 
         worksheet = writer.sheets[sheet]
 
